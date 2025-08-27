@@ -33,10 +33,33 @@
   .wallet-status { text-align:center; margin:10px; padding:10px; border-radius:6px; }
   .connected { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
   .disconnected { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+  .rpc-status { 
+    text-align: center; 
+    margin: 10px; 
+    padding: 10px; 
+    border-radius: 6px; 
+    background: #e2e3e5; 
+    color: #383d41;
+    border: 1px solid #d6d8db;
+  }
+  .rpc-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+  }
+  .rpc-success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+  }
 </style>
 </head>
 <body>
 <h1>🏡 Village Market - Premium Tokenized Assets</h1>
+
+<div class="rpc-status" id="rpcStatus">
+  RPC Status: Checking connection...
+</div>
 
 <div class="wallet-status disconnected" id="walletStatus">
   Wallet Status: Not Connected
@@ -54,14 +77,14 @@
   <h2>Premium Subscription</h2>
   <p>Access dynamic assets for $20/month</p>
   <div class="premium-status" id="premiumStatus">Status: Not Subscribed</div>
-  <button onclick="subscribeToPremium()" id="subscribeButton">Subscribe to Premium</button>
-  <button onclick="checkSubscriptionStatus()">Check Subscription</button>
+  <button onclick="subscribeToPremium()" id="subscribeButton" disabled>Subscribe to Premium</button>
+  <button onclick="checkSubscriptionStatus()" id="checkSubscriptionButton" disabled>Check Subscription</button>
 </div>
 
 <div class="fund-wallet">
-  <button onclick="fundWallet(0.01)" id="fundButton1">Fund Wallet (0.01 SOL)</button>
-  <button onclick="fundWallet(0.1)" id="fundButton2">Fund Wallet (0.1 SOL)</button>
-  <button onclick="fundWallet(1)" id="fundButton3">Fund Wallet (1 SOL)</button>
+  <button onclick="fundWallet(0.01)" id="fundButton1" disabled>Fund Wallet (0.01 SOL)</button>
+  <button onclick="fundWallet(0.1)" id="fundButton2" disabled>Fund Wallet (0.1 SOL)</button>
+  <button onclick="fundWallet(1)" id="fundButton3" disabled>Fund Wallet (1 SOL)</button>
 </div>
 
 <div style="text-align:center; margin:10px;">
@@ -80,10 +103,16 @@ const MARKET_WALLET = "7Ga6TYqsf6pnWf5h6ZkJDdoBXC3NDvrzx7whH99ais6D";
 const PREMIUM_PRICE_USD = 20;
 const secretSalt = "super-secret-salt";
 let provider = null;
-const connection = new solanaWeb3.Connection(
-  solanaWeb3.clusterApiUrl("mainnet-beta"),
-  "confirmed"
-);
+let connection = null;
+let currentRpcEndpoint = null;
+
+// List of RPC endpoints to try (fallback if one fails)
+const rpcEndpoints = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-api.projectserum.com",
+  "https://rpc.ankr.com/solana",
+  "https://ssc-dao.genesysgo.net"
+];
 
 let walletPublicKey = "";
 let balanceSOL = 0;
@@ -117,6 +146,44 @@ let dynamicItems = [
 // Initialize price history
 dynamicItems.forEach(d=>priceHistory[d.dynamic]=[]);
 
+// Initialize RPC connection with fallback
+async function initializeRpcConnection() {
+  const statusElement = document.getElementById('rpcStatus');
+  
+  for (const endpoint of rpcEndpoints) {
+    try {
+      statusElement.textContent = `RPC Status: Trying ${endpoint.split('//')[1]}`;
+      
+      // Test the connection
+      const testConnection = new solanaWeb3.Connection(endpoint, "confirmed");
+      const version = await testConnection.getVersion();
+      
+      // If successful, use this endpoint
+      connection = testConnection;
+      currentRpcEndpoint = endpoint;
+      
+      statusElement.textContent = `RPC Status: Connected to ${endpoint.split('//')[1]}`;
+      statusElement.className = "rpc-status rpc-success";
+      
+      console.log(`Connected to RPC: ${endpoint}, Version: ${version['solana-core']}`);
+      return true;
+    } catch (error) {
+      console.warn(`Failed to connect to ${endpoint}:`, error);
+      continue;
+    }
+  }
+  
+  // If all endpoints failed
+  statusElement.textContent = "RPC Status: All connection attempts failed. Some features may not work.";
+  statusElement.className = "rpc-status rpc-error";
+  
+  // Create a fallback connection anyway
+  connection = new solanaWeb3.Connection(rpcEndpoints[0], "confirmed");
+  currentRpcEndpoint = rpcEndpoints[0];
+  
+  return false;
+}
+
 // Check if Phantom is installed
 function checkPhantomInstalled() {
   if (window.phantom?.solana || window.solana?.isPhantom) {
@@ -128,6 +195,7 @@ function checkPhantomInstalled() {
   document.getElementById('connectButton').disabled = true;
   document.getElementById('connectButton').textContent = "Install Phantom First";
   document.getElementById('subscribeButton').disabled = true;
+  document.getElementById('checkSubscriptionButton').disabled = true;
   document.getElementById('fundButton1').disabled = true;
   document.getElementById('fundButton2').disabled = true;
   document.getElementById('fundButton3').disabled = true;
@@ -161,6 +229,7 @@ async function connectWallet() {
       
       // Enable buttons
       document.getElementById('subscribeButton').disabled = false;
+      document.getElementById('checkSubscriptionButton').disabled = false;
       document.getElementById('fundButton1').disabled = false;
       document.getElementById('fundButton2').disabled = false;
       document.getElementById('fundButton3').disabled = false;
@@ -172,7 +241,11 @@ async function connectWallet() {
     }
   } catch (error) {
     console.error("Wallet connection error:", error);
-    alert("Failed to connect wallet: " + error.message);
+    if (error.message && error.message.includes("not found")) {
+      alert("Phantom Wallet not detected. Please make sure you have Phantom installed and try again.");
+    } else {
+      alert("Failed to connect wallet: " + error.message);
+    }
   }
 }
 
@@ -193,6 +266,7 @@ async function disconnectWallet() {
   
   // Disable buttons
   document.getElementById('subscribeButton').disabled = true;
+  document.getElementById('checkSubscriptionButton').disabled = true;
   document.getElementById('fundButton1').disabled = true;
   document.getElementById('fundButton2').disabled = true;
   document.getElementById('fundButton3').disabled = true;
@@ -203,13 +277,15 @@ async function disconnectWallet() {
 }
 
 async function updateBalance() {
-  if (!walletPublicKey) return;
+  if (!walletPublicKey || !connection) return;
   try {
     const lamports = await connection.getBalance(new solanaWeb3.PublicKey(walletPublicKey));
     balanceSOL = lamports / solanaWeb3.LAMPORTS_PER_SOL;
     updateBalanceDisplay();
   } catch (error) {
     console.error("Balance update error:", error);
+    // Try to reconnect to a different RPC endpoint
+    await initializeRpcConnection();
   }
 }
 
@@ -227,8 +303,19 @@ async function fundWallet(amountSOL) {
     const fromPubkey = new solanaWeb3.PublicKey(walletPublicKey);
     const toPubkey   = new solanaWeb3.PublicKey(MARKET_WALLET);
 
-    // Fresh blockhash from the same cluster to avoid "recentBlockhash not found"
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
+    // Get recent blockhash with error handling
+    let blockhash, lastValidBlockHeight;
+    try {
+      const latestBlockhash = await connection.getLatestBlockhash("finalized");
+      blockhash = latestBlockhash.blockhash;
+      lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
+    } catch (error) {
+      console.error("Error getting blockhash:", error);
+      // Try to reconnect to a different RPC endpoint
+      await initializeRpcConnection();
+      alert("Network error. Please try again.");
+      return;
+    }
 
     const tx = new solanaWeb3.Transaction({
       recentBlockhash: blockhash,
@@ -252,7 +339,13 @@ async function fundWallet(amountSOL) {
     await updateBalance();
   } catch (err) {
     console.error(err);
-    alert("Transaction failed: " + (err?.message || err));
+    if (err.message && err.message.includes("403")) {
+      alert("Network error. Please try again or check your connection.");
+      // Try to reconnect to a different RPC endpoint
+      await initializeRpcConnection();
+    } else {
+      alert("Transaction failed: " + (err?.message || err));
+    }
   }
 }
 
@@ -274,8 +367,19 @@ async function subscribeToPremium() {
     const fromPubkey = new solanaWeb3.PublicKey(walletPublicKey);
     const toPubkey   = new solanaWeb3.PublicKey(MARKET_WALLET);
 
-    // Fresh blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
+    // Get recent blockhash with error handling
+    let blockhash, lastValidBlockHeight;
+    try {
+      const latestBlockhash = await connection.getLatestBlockhash("finalized");
+      blockhash = latestBlockhash.blockhash;
+      lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
+    } catch (error) {
+      console.error("Error getting blockhash:", error);
+      // Try to reconnect to a different RPC endpoint
+      await initializeRpcConnection();
+      alert("Network error. Please try again.");
+      return;
+    }
 
     const tx = new solanaWeb3.Transaction({
       recentBlockhash: blockhash,
@@ -309,7 +413,13 @@ async function subscribeToPremium() {
     renderMarket(); // Re-render market to show unlocked premium items
   } catch (err) {
     console.error(err);
-    alert("Subscription failed: " + (err?.message || err));
+    if (err.message && err.message.includes("403")) {
+      alert("Network error. Please try again or check your connection.");
+      // Try to reconnect to a different RPC endpoint
+      await initializeRpcConnection();
+    } else {
+      alert("Subscription failed: " + (err?.message || err));
+    }
   }
 }
 
@@ -585,7 +695,10 @@ function validateInventory(){
 }
 
 // Initialize the app
-window.addEventListener('load', function() {
+window.addEventListener('load', async function() {
+  // Initialize RPC connection first
+  await initializeRpcConnection();
+  
   // Check if Phantom is installed
   checkPhantomInstalled();
   
