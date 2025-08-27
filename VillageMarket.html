@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Village Market - Premium Tokenized Assets</title>
+<script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
+<style>
+  body { margin:0; font-family: monospace; background: #a97450; color: #2b1b0e; }
+  h1 { text-align:center; padding:20px; text-shadow:2px 2px #fff5e1; }
+  .balance { text-align:center; margin:10px; font-size:14px; background:#fff5e1; border:3px solid #5c3a21; display:inline-block; padding:10px; border-radius:6px; }
+  .wallet-connect, .fund-wallet { text-align:center; margin:20px; }
+  button { font-family: inherit; background:#8b5a2b; border:2px solid #5c3a21; padding:10px 15px; color:#fff5e1; cursor:pointer; border-radius:4px; margin:5px; }
+  .market { display:flex; flex-wrap:wrap; justify-content:center; margin:40px; gap:20px; }
+  .item { position:relative; width:80px; min-height:100px; background:#fff5e1; border:3px solid #5c3a21; border-radius:6px; padding:10px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:32px; }
+  .premium-item { border:3px solid #c99039; background: linear-gradient(to bottom right, #fff5e1, #ffedcc); }
+  .premium-badge { position:absolute; top:5px; right:5px; background:#c99039; color:white; font-size:8px; padding:2px 4px; border-radius:3px; }
+  .price-tag { display:none; position:absolute; bottom:35px; left:50%; transform:translateX(-50%); background:#5c3a21; color:#fff5e1; font-size:10px; padding:3px 5px; border-radius:4px; }
+  .premium-price-tag { background:#c99039; }
+  .item:hover .price-tag { display:block; }
+  canvas { margin-top:5px; border:1px solid #5c3a21; border-radius:4px; background:#fff5e1; }
+  .inventory { margin:40px; padding:20px; border:3px dashed #5c3a21; background:#fff5e1; border-radius:8px; }
+  .inventory h2 { font-size:14px; margin-bottom:10px; }
+  .inventory-items { display:flex; gap:20px; flex-wrap:wrap; }
+  .inventory-item { width:60px; height:60px; background:#d2b48c; border:2px solid #5c3a21; display:flex; align-items:center; justify-content:center; border-radius:4px; font-size:24px; position:relative; cursor:pointer; }
+  .sell-btn { position:absolute; bottom:0; font-size:10px; background:#8b0000; color:#fff5e1; border:none; border-radius:0 0 4px 4px; width:100%; display:none; cursor:pointer; }
+  .inventory-item:hover .sell-btn { display:block; }
+  .subscription-section { text-align:center; margin:20px; padding:15px; background:#fff5e1; border:3px solid #5c3a21; border-radius:8px; }
+  .premium-status { font-weight:bold; color:#c99039; margin:10px; }
+  .locked-item { opacity:0.7; filter:grayscale(0.7); }
+  .locked-overlay { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; border-radius:4px; }
+  .lock-icon { color:white; font-size:24px; }
+  .wallet-status { text-align:center; margin:10px; padding:10px; border-radius:6px; }
+  .connected { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
+  .disconnected { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+</style>
+</head>
+<body>
+<h1>🏡 Village Market - Premium Tokenized Assets</h1>
+
+<div class="wallet-status disconnected" id="walletStatus">
+  Wallet Status: Not Connected
+</div>
+
+<div class="wallet-connect">
+  <button onclick="connectWallet()" id="connectButton">Connect Phantom Wallet</button>
+</div>
+
+<div class="balance">
+  Balance: <span id="balance">0.00</span>
+</div>
+
+<div class="subscription-section">
+  <h2>Premium Subscription</h2>
+  <p>Access dynamic assets for $20/month</p>
+  <div class="premium-status" id="premiumStatus">Status: Not Subscribed</div>
+  <button onclick="subscribeToPremium()" id="subscribeButton">Subscribe to Premium</button>
+  <button onclick="checkSubscriptionStatus()">Check Subscription</button>
+</div>
+
+<div class="fund-wallet">
+  <button onclick="fundWallet(0.01)" id="fundButton1">Fund Wallet (0.01 SOL)</button>
+  <button onclick="fundWallet(0.1)" id="fundButton2">Fund Wallet (0.1 SOL)</button>
+  <button onclick="fundWallet(1)" id="fundButton3">Fund Wallet (1 SOL)</button>
+</div>
+
+<div style="text-align:center; margin:10px;">
+  <button onclick="toggleGraphs()">Toggle Price Graphs</button>
+</div>
+
+<div class="market"></div>
+
+<div class="inventory">
+  <h2>🎒 Inventory (click SELL to refund in local currency)</h2>
+  <div class="inventory-items" id="inventoryItems"></div>
+</div>
+
+<script>
+const MARKET_WALLET = "7Ga6TYqsf6pnWf5h6ZkJDdoBXC3NDvrzx7whH99ais6D";
+const PREMIUM_PRICE_USD = 20;
+const secretSalt = "super-secret-salt";
+let provider = null;
+const connection = new solanaWeb3.Connection(
+  solanaWeb3.clusterApiUrl("mainnet-beta"),
+  "confirmed"
+);
+
+let walletPublicKey = "";
+let balanceSOL = 0;
+let solPriceUSD = 0;
+let fxRate = 1;
+let currency = "USD";
+let inventory = [];
+let showGraphs = false;
+let priceHistory = {};
+let dynamicPrices = {};
+let hasPremiumSubscription = false;
+let subscriptionEndDate = null;
+
+// Fixed collectibles (available to all users)
+const fixedItems = [
+  { emoji: "🍎", name: "Tokenized Apple", price: 0.25 },
+  { emoji: "📖", name: "Tokenized Book", price: 1.5 }
+];
+
+// Dynamic assets (available only to premium users)
+let dynamicItems = [
+  { emoji: "🥇", name: "Gold Coin", api:"tether-gold", fraction:0.005, dynamic:"gold", premium: true },
+  { emoji: "🪙", name: "Silver Coin", api:"silver-token-xagx", fraction:0.01, dynamic:"silver", premium: true },
+  { emoji: "🏥", name: "Healthcare", tokens: ["unitedhealth-xstock","eli-lilly-xstock","abbvie-xstock"], fraction: 0.01, dynamic: "healthcare", premium: true },
+  { emoji: "💻", name: "Big Tech", tokens: ["apple-xstock","microsoft-xstock","alphabet-xstock"], fraction: 0.01, dynamic: "bigtech", premium: true },
+  { emoji: "🍔", name: "Food", tokens: ["mcdonalds-xstock","pepsico-xstock","cocacola-xstock"], fraction: 0.01, dynamic: "food", premium: true },
+  { emoji: "🔋", name: "Energy", tokens: ["tesla-xstock"], fraction: 0.01, dynamic: "energy", premium: true },
+  { emoji: "₿", name: "Bitcoin", api: "bitcoin", fraction: 0.00001, dynamic: "bitcoin", premium: true }
+];
+
+// Initialize price history
+dynamicItems.forEach(d=>priceHistory[d.dynamic]=[]);
+
+// Check if Phantom is installed
+function checkPhantomInstalled() {
+  if (window.phantom?.solana || window.solana?.isPhantom) {
+    return true;
+  }
+  
+  // Update UI to show wallet not installed
+  document.getElementById('walletStatus').textContent = "Wallet Status: Phantom Not Installed";
+  document.getElementById('connectButton').disabled = true;
+  document.getElementById('connectButton').textContent = "Install Phantom First";
+  document.getElementById('subscribeButton').disabled = true;
+  document.getElementById('fundButton1').disabled = true;
+  document.getElementById('fundButton2').disabled = true;
+  document.getElementById('fundButton3').disabled = true;
+  
+  return false;
+}
+
+// Improved wallet connection function
+async function connectWallet() {
+  try {
+    // Check if Phantom is available
+    if (!checkPhantomInstalled()) {
+      alert("Please install Phantom wallet from https://phantom.app/");
+      window.open("https://phantom.app/", "_blank");
+      return;
+    }
+    
+    // Get the provider
+    provider = window.phantom?.solana || window.solana;
+    
+    if (!provider.isConnected) {
+      // Connect to the wallet
+      const response = await provider.connect();
+      walletPublicKey = response.publicKey.toString();
+      
+      // Update UI
+      document.getElementById('walletStatus').textContent = "Wallet Status: Connected to " + walletPublicKey.substring(0, 8) + "...";
+      document.getElementById('walletStatus').className = "wallet-status connected";
+      document.getElementById('connectButton').textContent = "Disconnect Wallet";
+      document.getElementById('connectButton').setAttribute('onclick', 'disconnectWallet()');
+      
+      // Enable buttons
+      document.getElementById('subscribeButton').disabled = false;
+      document.getElementById('fundButton1').disabled = false;
+      document.getElementById('fundButton2').disabled = false;
+      document.getElementById('fundButton3').disabled = false;
+      
+      // Update balance and validate inventory
+      await updateBalance();
+      validateInventory();
+      checkSubscriptionStatus();
+    }
+  } catch (error) {
+    console.error("Wallet connection error:", error);
+    alert("Failed to connect wallet: " + error.message);
+  }
+}
+
+// Disconnect wallet function
+async function disconnectWallet() {
+  if (provider && provider.disconnect) {
+    await provider.disconnect();
+  }
+  
+  walletPublicKey = "";
+  
+  // Update UI
+  document.getElementById('walletStatus').textContent = "Wallet Status: Not Connected";
+  document.getElementById('walletStatus').className = "wallet-status disconnected";
+  document.getElementById('connectButton').textContent = "Connect Phantom Wallet";
+  document.getElementById('connectButton').setAttribute('onclick', 'connectWallet()');
+  document.getElementById('balance').textContent = "0.00";
+  
+  // Disable buttons
+  document.getElementById('subscribeButton').disabled = true;
+  document.getElementById('fundButton1').disabled = true;
+  document.getElementById('fundButton2').disabled = true;
+  document.getElementById('fundButton3').disabled = true;
+  
+  // Clear inventory
+  inventory = [];
+  renderInventory();
+}
+
+async function updateBalance() {
+  if (!walletPublicKey) return;
+  try {
+    const lamports = await connection.getBalance(new solanaWeb3.PublicKey(walletPublicKey));
+    balanceSOL = lamports / solanaWeb3.LAMPORTS_PER_SOL;
+    updateBalanceDisplay();
+  } catch (error) {
+    console.error("Balance update error:", error);
+  }
+}
+
+function updateBalanceDisplay() {
+  const fiat = (balanceSOL * solPriceUSD * fxRate) || 0;
+  document.getElementById("balance").textContent = fiat.toFixed(2) + " " + currency;
+}
+
+async function fundWallet(amountSOL) {
+  try {
+    if (!walletPublicKey) return alert("Connect your wallet first!");
+    provider = provider || window.phantom?.solana || window.solana;
+    if (!provider) return alert("Phantom provider not found.");
+
+    const fromPubkey = new solanaWeb3.PublicKey(walletPublicKey);
+    const toPubkey   = new solanaWeb3.PublicKey(MARKET_WALLET);
+
+    // Fresh blockhash from the same cluster to avoid "recentBlockhash not found"
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
+
+    const tx = new solanaWeb3.Transaction({
+      recentBlockhash: blockhash,
+      feePayer: fromPubkey
+    }).add(
+      solanaWeb3.SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports: Math.round(amountSOL * solanaWeb3.LAMPORTS_PER_SOL)
+      })
+    );
+
+    // Ask Phantom to sign
+    const signedTx = await provider.signTransaction(tx);
+    const sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
+
+    // Confirm using the same blockhash tuple
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "finalized");
+
+    alert(`Thanks! Sent ${amountSOL} SOL.\nSignature: ${sig}`);
+    await updateBalance();
+  } catch (err) {
+    console.error(err);
+    alert("Transaction failed: " + (err?.message || err));
+  }
+}
+
+async function subscribeToPremium() {
+  if (!walletPublicKey) return alert("Connect your wallet first!");
+  
+  // Calculate the SOL cost of the premium subscription
+  const solCost = PREMIUM_PRICE_USD / solPriceUSD;
+  
+  if (balanceSOL < solCost) {
+    alert(`You need at least ${solCost.toFixed(4)} SOL ($${PREMIUM_PRICE_USD}) to subscribe to Premium.`);
+    return;
+  }
+  
+  try {
+    provider = provider || window.phantom?.solana || window.solana;
+    if (!provider) return alert("Phantom provider not found.");
+
+    const fromPubkey = new solanaWeb3.PublicKey(walletPublicKey);
+    const toPubkey   = new solanaWeb3.PublicKey(MARKET_WALLET);
+
+    // Fresh blockhash
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
+
+    const tx = new solanaWeb3.Transaction({
+      recentBlockhash: blockhash,
+      feePayer: fromPubkey
+    }).add(
+      solanaWeb3.SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports: Math.round(solCost * solanaWeb3.LAMPORTS_PER_SOL)
+      })
+    );
+
+    // Ask Phantom to sign
+    const signedTx = await provider.signTransaction(tx);
+    const sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
+
+    // Confirm using the same blockhash tuple
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "finalized");
+
+    // Activate premium subscription (1 month from now)
+    const now = new Date();
+    subscriptionEndDate = new Date(now.setMonth(now.getMonth() + 1));
+    hasPremiumSubscription = true;
+    
+    // Save to local storage
+    localStorage.setItem(`premium_${walletPublicKey}`, subscriptionEndDate.toISOString());
+    updatePremiumStatusDisplay();
+    
+    alert(`Premium subscription activated! Enjoy access to dynamic assets until ${subscriptionEndDate.toLocaleDateString()}.\nSignature: ${sig}`);
+    await updateBalance();
+    renderMarket(); // Re-render market to show unlocked premium items
+  } catch (err) {
+    console.error(err);
+    alert("Subscription failed: " + (err?.message || err));
+  }
+}
+
+function checkSubscriptionStatus() {
+  if (!walletPublicKey) return alert("Connect your wallet first!");
+  
+  const storedDate = localStorage.getItem(`premium_${walletPublicKey}`);
+  if (!storedDate) {
+    alert("No active premium subscription found.");
+    return;
+  }
+  
+  subscriptionEndDate = new Date(storedDate);
+  const now = new Date();
+  
+  if (now > subscriptionEndDate) {
+    hasPremiumSubscription = false;
+    localStorage.removeItem(`premium_${walletPublicKey}`);
+    alert("Your premium subscription has expired.");
+  } else {
+    hasPremiumSubscription = true;
+    alert(`Your premium subscription is active until ${subscriptionEndDate.toLocaleDateString()}.`);
+  }
+  
+  updatePremiumStatusDisplay();
+  renderMarket(); // Re-render market based on subscription status
+}
+
+function updatePremiumStatusDisplay() {
+  const statusElement = document.getElementById("premiumStatus");
+  if (hasPremiumSubscription && subscriptionEndDate) {
+    statusElement.textContent = `Status: Premium (until ${subscriptionEndDate.toLocaleDateString()})`;
+    statusElement.style.color = "#2e8b57"; // Green for active
+  } else {
+    statusElement.textContent = "Status: Not Subscribed";
+    statusElement.style.color = "#c99039"; // Amber for not subscribed
+  }
+}
+
+async function fetchRates() {
+  try {
+    const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
+    const solData = await solRes.json();
+    solPriceUSD = solData.solana?.usd || 0;
+
+    let validIds = [];
+    dynamicItems.forEach(d=>{
+      if(d.api) validIds.push(d.api);
+      if(d.tokens) validIds.push(...d.tokens);
+    });
+    if(validIds.length>0){
+      const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${validIds.join(",")}&vs_currencies=usd`);
+      const data = await res.json();
+      dynamicItems.forEach(d=>{
+        if(d.api) {
+          let rawPrice = data[d.api]?.usd || 0;
+          if(d.fraction && rawPrice) rawPrice *= d.fraction;
+          dynamicPrices[d.dynamic] = rawPrice;
+        }
+        if(d.tokens){
+          let sum = 0, count=0;
+          d.tokens.forEach(t=>{
+            if(data[t]?.usd){
+              sum += data[t].usd;
+              count++;
+            }
+          });
+          const avg = count>0 ? (sum/count) : 0;
+          dynamicPrices[d.dynamic] = avg * d.fraction;
+        }
+      });
+    }
+
+    const fxRes = await fetch(`https://api.exchangerate.host/latest?base=USD&symbols=${currency}`);
+    const fxData = await fxRes.json();
+    fxRate = fxData.rates?.[currency] || 1;
+
+    updateBalanceDisplay();
+    renderMarket();
+  } catch(err){ 
+    console.error(err); 
+    dynamicItems.forEach(d=>{
+      if(!dynamicPrices[d.dynamic]) dynamicPrices[d.dynamic] = 0;
+    });
+    renderMarket();
+  }
+}
+
+function renderMarket() {
+  const container = document.querySelector(".market");
+  container.innerHTML = "";
+  const allItems = [...fixedItems, ...dynamicItems];
+  
+  allItems.forEach((item)=>{
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = item.emoji;
+    
+    // Add premium styling for premium items
+    if (item.premium) {
+      div.classList.add("premium-item");
+      
+      // Add premium badge
+      const premiumBadge = document.createElement("div");
+      premiumBadge.className = "premium-badge";
+      premiumBadge.textContent = "PREMIUM";
+      div.appendChild(premiumBadge);
+      
+      // Lock items if user doesn't have premium
+      if (!hasPremiumSubscription) {
+        div.classList.add("locked-item");
+        div.onclick = () => alert("Premium subscription required to purchase dynamic assets!");
+        
+        // Add lock overlay
+        const lockOverlay = document.createElement("div");
+        lockOverlay.className = "locked-overlay";
+        
+        const lockIcon = document.createElement("div");
+        lockIcon.className = "lock-icon";
+        lockIcon.textContent = "🔒";
+        
+        lockOverlay.appendChild(lockIcon);
+        div.appendChild(lockOverlay);
+      } else {
+        div.onclick = () => buyItem(item);
+      }
+    } else {
+      div.onclick = () => buyItem(item);
+    }
+
+    const priceTag = document.createElement("div");
+    priceTag.className = "price-tag";
+    let priceUSD = item.price || dynamicPrices[item.dynamic] || 0;
+    priceTag.textContent = (priceUSD*fxRate).toFixed(2) + " " + currency;
+    
+    if (item.premium) {
+      priceTag.classList.add("premium-price-tag");
+    }
+    
+    div.appendChild(priceTag);
+
+    if(item.dynamic && hasPremiumSubscription){
+      const canvas = document.createElement("canvas");
+      canvas.width = 70;
+      canvas.height = 30;
+      canvas.id = `graph-${item.dynamic}`;
+      canvas.style.display = showGraphs ? "block" : "none";
+      div.appendChild(canvas);
+
+      const history = priceHistory[item.dynamic];
+      history.push(priceUSD);
+      if(history.length>10) history.shift();
+
+      if(showGraphs){
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.beginPath();
+        const maxPrice = Math.max(...history);
+        const minPrice = Math.min(...history);
+        history.forEach((p,i)=>{
+          const x = i*(canvas.width/10);
+          const y = canvas.height - ((p - minPrice)/(maxPrice - minPrice||1))*canvas.height;
+          if(i===0) ctx.moveTo(x,y);
+          else ctx.lineTo(x,y);
+        });
+        ctx.strokeStyle = "#8b0000";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    container.appendChild(div);
+  });
+}
+
+function toggleGraphs(){
+  showGraphs = !showGraphs;
+  dynamicItems.forEach(d=>{
+    const canvas = document.getElementById(`graph-${d.dynamic}`);
+    if(canvas) canvas.style.display = showGraphs ? "block" : "none";
+  });
+}
+
+function buyItem(item) {
+  if (!walletPublicKey) return alert("Connect your wallet first!");
+  
+  // Check if it's a premium item and user has subscription
+  if (item.premium && !hasPremiumSubscription) {
+    alert("Premium subscription required to purchase dynamic assets!");
+    return;
+  }
+  
+  let priceUSD = item.price || dynamicPrices[item.dynamic] || 0;
+  const priceSOL = solPriceUSD ? priceUSD / solPriceUSD : Infinity;
+
+  if (balanceSOL >= priceSOL) {
+    balanceSOL -= priceSOL; // local spend
+    addToInventory(item.emoji);
+    updateBalanceDisplay();
+  } else alert("Not enough funds!");
+}
+
+function addToInventory(emoji) {
+  inventory.push(emoji);
+  renderInventory();
+  updateInventoryHash();
+}
+
+function renderInventory() {
+  const container = document.getElementById("inventoryItems");
+  container.innerHTML = "";
+  inventory.forEach((e,i)=>{
+    const div = document.createElement("div");
+    div.className = "inventory-item";
+    div.textContent = e;
+
+    const sellBtn = document.createElement("button");
+    sellBtn.textContent = "SELL";
+    sellBtn.className = "sell-btn";
+    sellBtn.onclick = (event)=>{ event.stopPropagation(); sellItem(i); };
+    div.appendChild(sellBtn);
+
+    container.appendChild(div);
+  });
+}
+
+function sellItem(index) {
+  const item = inventory[index];
+  let refundUSD = 0;
+  const fixed = fixedItems.find(f=>f.emoji===item);
+  const dyn = dynamicItems.find(d=>d.emoji===item);
+  if (dyn) refundUSD = dynamicPrices[dyn.dynamic] || 0;
+  else if (fixed) refundUSD = fixed.price *0.9;
+
+  const refundLocal = refundUSD*fxRate;
+  alert(`Sold ${item} for ${refundLocal.toFixed(2)} ${currency} (SOL spent is non-refundable)`);
+
+  inventory.splice(index,1);
+  renderInventory();
+  updateInventoryHash();
+}
+
+function updateInventoryHash(){
+  if(!walletPublicKey) return;
+  const hash = sha256(inventory.join(",")+walletPublicKey+secretSalt);
+  localStorage.setItem("invHash",hash);
+  localStorage.setItem("inventoryData",JSON.stringify(inventory));
+}
+
+function validateInventory(){
+  if(!walletPublicKey) return;
+  const storedHash = localStorage.getItem("invHash");
+  const storedData = JSON.parse(localStorage.getItem("inventoryData")||"[]");
+  const currentHash = sha256(storedData.join(",")+walletPublicKey+secretSalt);
+  if(storedHash===currentHash) inventory = storedData;
+  else { inventory=[]; localStorage.removeItem("invHash"); localStorage.removeItem("inventoryData"); }
+  renderInventory();
+  
+  // Also check subscription status on load
+  const storedDate = localStorage.getItem(`premium_${walletPublicKey}`);
+  if (storedDate) {
+    subscriptionEndDate = new Date(storedDate);
+    const now = new Date();
+    hasPremiumSubscription = now <= subscriptionEndDate;
+    
+    // If subscription expired, clean up
+    if (!hasPremiumSubscription) {
+      localStorage.removeItem(`premium_${walletPublicKey}`);
+    }
+  }
+  
+  updatePremiumStatusDisplay();
+}
+
+// Initialize the app
+window.addEventListener('load', function() {
+  // Check if Phantom is installed
+  checkPhantomInstalled();
+  
+  // If Phantom is detected after page load
+  if (window.solana) {
+    window.solana.on('connect', () => {
+      console.log('Connected to wallet');
+    });
+    
+    window.solana.on('disconnect', () => {
+      console.log('Disconnected from wallet');
+      disconnectWallet();
+    });
+  }
+  
+  // Fetch rates on load
+  fetchRates();
+  setInterval(fetchRates, 6666.7);
+});
+</script>
+</body>
+</html>
